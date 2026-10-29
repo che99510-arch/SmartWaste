@@ -1,7 +1,6 @@
 import { useState } from 'react'
 import { DashboardLayout } from '@/components/DashboardLayout'
-import { useMaintenance, useCreateMaintenance, useUpdateMaintenance, useDeleteMaintenance } from '@/hooks/useMaintenance'
-import { useBins } from '@/hooks/useBins'
+import { mockMaintenance, mockBins } from '@/data/mockData'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -13,73 +12,71 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Plus, Wrench, Trash2, CheckCircle, Clock } from 'lucide-react'
 import { formatDateTime } from '@/lib/utils'
 import { toast } from 'sonner'
+import type { MaintenanceSchedule } from '@/types'
 
 const PRIORITY_COLOR: Record<string, any> = { low: 'secondary', medium: 'outline', high: 'warning', urgent: 'destructive' }
 const STATUS_COLOR: Record<string, any> = { scheduled: 'secondary', in_progress: 'warning', completed: 'success', cancelled: 'destructive' }
 
 export default function Maintenance() {
-  const { data: all = [], isLoading } = useMaintenance()
-  const { data: bins = [] } = useBins()
-  const create = useCreateMaintenance()
-  const update = useUpdateMaintenance()
-  const remove = useDeleteMaintenance()
-
+  const [tasks, setTasks] = useState<MaintenanceSchedule[]>(mockMaintenance)
   const [showDialog, setShowDialog] = useState(false)
-  const [form, setForm] = useState({
-    bin_id: '', maintenance_type: 'inspection' as const, title: '', description: '',
-    assigned_to: '', priority: 'medium' as const, scheduled_at: '',
-  })
+  const [form, setForm] = useState({ bin_id: '', maintenance_type: 'inspection' as const, title: '', description: '', assigned_to: '', priority: 'medium' as const, scheduled_at: '' })
 
-  const upcoming = all.filter(m => m.status !== 'completed' && m.status !== 'cancelled')
-  const completed = all.filter(m => m.status === 'completed' || m.status === 'cancelled')
+  const upcoming = tasks.filter(t => t.status !== 'completed' && t.status !== 'cancelled')
+  const history = tasks.filter(t => t.status === 'completed' || t.status === 'cancelled')
 
-  const handleCreate = async () => {
-    try {
-      await create.mutateAsync({ ...form, scheduled_at: new Date(form.scheduled_at).toISOString() })
-      toast.success('Maintenance scheduled')
-      setShowDialog(false)
-    } catch (e: any) { toast.error(e.message) }
+  const handleCreate = () => {
+    if (!form.bin_id || !form.title || !form.scheduled_at) return toast.error('Fill required fields')
+    const task: MaintenanceSchedule = {
+      ...form, id: Date.now().toString(), status: 'scheduled', completed_at: null, notes: null, created_by: 'u1',
+      scheduled_at: new Date(form.scheduled_at).toISOString(),
+      created_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+    }
+    setTasks(prev => [...prev, task])
+    toast.success('Maintenance scheduled')
+    setShowDialog(false)
   }
 
-  const markComplete = async (id: string) => {
-    try {
-      await update.mutateAsync({ id, updates: { status: 'completed', completed_at: new Date().toISOString() } })
-      toast.success('Marked complete')
-    } catch (e: any) { toast.error(e.message) }
+  const markComplete = (id: string) => {
+    setTasks(prev => prev.map(t => t.id === id ? { ...t, status: 'completed', completed_at: new Date().toISOString() } : t))
+    toast.success('Marked complete')
   }
 
-  const handleDelete = async (id: string) => {
-    try {
-      await remove.mutateAsync(id)
-      toast.success('Deleted')
-    } catch (e: any) { toast.error(e.message) }
+  const deleteTask = (id: string) => {
+    setTasks(prev => prev.filter(t => t.id !== id))
+    toast.success('Deleted')
   }
 
-  function MaintenanceCard({ m }: { m: ReturnType<typeof useMaintenance>['data'] extends (infer T)[] ? T : never }) {
+  const getBinLabel = (binId: string) => {
+    const b = mockBins.find(b => b.id === binId)
+    return b ? `${b.bin_id} — ${b.location_name}` : binId
+  }
+
+  function TaskCard({ t }: { t: MaintenanceSchedule }) {
     return (
       <Card>
         <CardContent className="pt-4 pb-4">
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div className="flex-1">
               <div className="flex items-center gap-2 flex-wrap mb-1">
-                <p className="font-medium text-sm">{m.title}</p>
-                <Badge variant={PRIORITY_COLOR[m.priority]} className="capitalize text-xs">{m.priority}</Badge>
-                <Badge variant={STATUS_COLOR[m.status]} className="capitalize text-xs">{m.status.replace('_',' ')}</Badge>
+                <p className="font-medium text-sm">{t.title}</p>
+                <Badge variant={PRIORITY_COLOR[t.priority]} className="capitalize text-xs">{t.priority}</Badge>
+                <Badge variant={STATUS_COLOR[t.status]} className="capitalize text-xs">{t.status.replace('_',' ')}</Badge>
               </div>
-              {m.description && <p className="text-sm text-muted-foreground">{m.description}</p>}
+              {t.description && <p className="text-sm text-muted-foreground">{t.description}</p>}
               <div className="flex flex-wrap gap-3 mt-2 text-xs text-muted-foreground">
-                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateTime(m.scheduled_at)}</span>
-                <span>{m.waste_bins?.bin_id} — {m.waste_bins?.location_name}</span>
-                {m.assigned_to && <span>Assigned: {m.assigned_to}</span>}
+                <span className="flex items-center gap-1"><Clock className="h-3 w-3" />{formatDateTime(t.scheduled_at)}</span>
+                <span>{getBinLabel(t.bin_id)}</span>
+                {t.assigned_to && <span>Assigned: {t.assigned_to}</span>}
               </div>
             </div>
             <div className="flex gap-2 shrink-0">
-              {m.status !== 'completed' && m.status !== 'cancelled' && (
-                <Button size="sm" variant="outline" onClick={() => markComplete(m.id)}>
+              {t.status !== 'completed' && t.status !== 'cancelled' && (
+                <Button size="sm" variant="outline" onClick={() => markComplete(t.id)}>
                   <CheckCircle className="h-3.5 w-3.5 mr-1" />Done
                 </Button>
               )}
-              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => handleDelete(m.id)}>
+              <Button size="sm" variant="ghost" className="text-destructive" onClick={() => deleteTask(t.id)}>
                 <Trash2 className="h-3.5 w-3.5" />
               </Button>
             </div>
@@ -105,21 +102,18 @@ export default function Maintenance() {
         <Tabs defaultValue="upcoming">
           <TabsList>
             <TabsTrigger value="upcoming">Upcoming ({upcoming.length})</TabsTrigger>
-            <TabsTrigger value="history">History ({completed.length})</TabsTrigger>
+            <TabsTrigger value="history">History ({history.length})</TabsTrigger>
           </TabsList>
           <TabsContent value="upcoming" className="mt-4 space-y-3">
-            {isLoading ? [...Array(3)].map((_, i) => <div key={i} className="h-24 bg-muted rounded-lg animate-pulse" />) :
-              upcoming.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
-                  <Wrench className="h-12 w-12" /><p>No upcoming maintenance tasks</p>
-                </div>
-              ) : upcoming.map(m => <MaintenanceCard key={m.id} m={m} />)
-            }
+            {upcoming.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-muted-foreground gap-3">
+                <Wrench className="h-12 w-12" /><p>No upcoming maintenance</p>
+              </div>
+            ) : upcoming.map(t => <TaskCard key={t.id} t={t} />)}
           </TabsContent>
           <TabsContent value="history" className="mt-4 space-y-3">
-            {completed.length === 0 ? (
-              <p className="text-center text-muted-foreground py-10 text-sm">No history yet</p>
-            ) : completed.map(m => <MaintenanceCard key={m.id} m={m} />)}
+            {history.length === 0 ? <p className="text-center text-muted-foreground py-10 text-sm">No history</p>
+              : history.map(t => <TaskCard key={t.id} t={t} />)}
           </TabsContent>
         </Tabs>
       </div>
@@ -131,7 +125,7 @@ export default function Maintenance() {
             <div className="col-span-2 space-y-1"><Label>Bin</Label>
               <Select value={form.bin_id} onValueChange={v => setForm(f => ({ ...f, bin_id: v }))}>
                 <SelectTrigger><SelectValue placeholder="Select bin..." /></SelectTrigger>
-                <SelectContent>{bins.map(b => <SelectItem key={b.id} value={b.id}>{b.bin_id} — {b.location_name}</SelectItem>)}</SelectContent>
+                <SelectContent>{mockBins.map(b => <SelectItem key={b.id} value={b.id}>{b.bin_id} — {b.location_name}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="col-span-2 space-y-1"><Label>Title</Label><Input value={form.title} onChange={e => setForm(f => ({ ...f, title: e.target.value }))} /></div>
@@ -153,7 +147,7 @@ export default function Maintenance() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancel</Button>
-            <Button className="bg-green-600 hover:bg-green-700" onClick={handleCreate} disabled={!form.bin_id || !form.title || !form.scheduled_at || create.isPending}>Schedule</Button>
+            <Button className="bg-green-600 hover:bg-green-700" onClick={handleCreate}>Schedule</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

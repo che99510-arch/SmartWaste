@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { DashboardLayout } from '@/components/DashboardLayout'
-import { useBins, useCreateBin, useDeleteBin, useUpdateBin } from '@/hooks/useBins'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { mockBins } from '@/data/mockData'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Input } from '@/components/ui/input'
@@ -11,59 +11,51 @@ import { Progress } from '@/components/ui/progress'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
-import { getFillBg, getFillColor, timeAgo } from '@/lib/utils'
+import { getFillColor, timeAgo } from '@/lib/utils'
 import { Plus, Search, Trash2, Edit, Eye, Battery } from 'lucide-react'
 import { toast } from 'sonner'
-import type { WasteBin, Database } from '@/integrations/supabase/types'
+import type { WasteBin } from '@/types'
 
-type BinInsert = Database['public']['Tables']['waste_bins']['Insert']
-
-const BLANK: BinInsert = { bin_id: '', location_name: '', latitude: 5.963, longitude: 10.159, zone: 'Zone A', capacity_liters: 240, fill_level: 0, status: 'active', waste_type: 'general', battery_level: 100 }
+const BLANK: Omit<WasteBin, 'id' | 'created_at' | 'updated_at' | 'last_sensor_update'> = {
+  bin_id: '', location_name: '', latitude: 5.963, longitude: 10.159, zone: 'Zone A',
+  capacity_liters: 240, fill_level: 0, status: 'active', waste_type: 'general',
+  battery_level: 100, temperature: 27.0, last_collected: null,
+}
 
 export default function BinManagement() {
-  const { data: bins = [], isLoading } = useBins()
-  const createBin = useCreateBin()
-  const updateBin = useUpdateBin()
-  const deleteBin = useDeleteBin()
-
+  const [bins, setBins] = useState<WasteBin[]>(mockBins)
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [showDialog, setShowDialog] = useState(false)
   const [editBin, setEditBin] = useState<WasteBin | null>(null)
-  const [form, setForm] = useState<BinInsert>(BLANK)
+  const [form, setForm] = useState(BLANK)
 
   const filtered = bins.filter(b => {
-    const matchSearch = b.bin_id.toLowerCase().includes(search.toLowerCase()) || b.location_name.toLowerCase().includes(search.toLowerCase())
-    const matchStatus = statusFilter === 'all' || b.status === statusFilter
-    return matchSearch && matchStatus
+    const ms = search.toLowerCase()
+    return (b.bin_id.toLowerCase().includes(ms) || b.location_name.toLowerCase().includes(ms)) &&
+      (statusFilter === 'all' || b.status === statusFilter)
   })
 
   const openAdd = () => { setEditBin(null); setForm(BLANK); setShowDialog(true) }
   const openEdit = (bin: WasteBin) => { setEditBin(bin); setForm({ ...bin }); setShowDialog(true) }
 
-  const handleSave = async () => {
-    try {
-      if (editBin) {
-        await updateBin.mutateAsync({ id: editBin.id, updates: form })
-        toast.success('Bin updated')
-      } else {
-        await createBin.mutateAsync(form)
-        toast.success('Bin added')
-      }
-      setShowDialog(false)
-    } catch (e: any) {
-      toast.error(e.message)
+  const handleSave = () => {
+    if (!form.bin_id || !form.location_name) return toast.error('Bin ID and location are required')
+    if (editBin) {
+      setBins(prev => prev.map(b => b.id === editBin.id ? { ...b, ...form, updated_at: new Date().toISOString() } : b))
+      toast.success('Bin updated')
+    } else {
+      const newBin: WasteBin = { ...form, id: Date.now().toString(), created_at: new Date().toISOString(), updated_at: new Date().toISOString(), last_sensor_update: new Date().toISOString() }
+      setBins(prev => [...prev, newBin])
+      toast.success('Bin added')
     }
+    setShowDialog(false)
   }
 
-  const handleDelete = async (bin: WasteBin) => {
+  const handleDelete = (bin: WasteBin) => {
     if (!confirm(`Delete ${bin.bin_id}?`)) return
-    try {
-      await deleteBin.mutateAsync(bin.id)
-      toast.success('Bin deleted')
-    } catch (e: any) {
-      toast.error(e.message)
-    }
+    setBins(prev => prev.filter(b => b.id !== bin.id))
+    toast.success('Bin deleted')
   }
 
   return (
@@ -75,11 +67,10 @@ export default function BinManagement() {
             <p className="text-muted-foreground text-sm">{bins.length} bins registered</p>
           </div>
           <Button className="bg-green-600 hover:bg-green-700" onClick={openAdd}>
-            <Plus className="h-4 w-4 mr-2" /> Add Bin
+            <Plus className="h-4 w-4 mr-2" />Add Bin
           </Button>
         </div>
 
-        {/* Filters */}
         <div className="flex gap-3 flex-wrap">
           <div className="relative flex-1 min-w-48">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
@@ -113,13 +104,7 @@ export default function BinManagement() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {isLoading ? (
-                  [...Array(6)].map((_, i) => (
-                    <TableRow key={i}>
-                      {[...Array(8)].map((_, j) => <TableCell key={j}><div className="h-4 bg-muted rounded animate-pulse" /></TableCell>)}
-                    </TableRow>
-                  ))
-                ) : filtered.map(bin => (
+                {filtered.map(bin => (
                   <TableRow key={bin.id}>
                     <TableCell className="font-mono font-medium">{bin.bin_id}</TableCell>
                     <TableCell className="max-w-36 truncate">{bin.location_name}</TableCell>
@@ -137,38 +122,27 @@ export default function BinManagement() {
                       </div>
                     </TableCell>
                     <TableCell>
-                      <Badge variant={bin.status === 'active' ? 'success' : bin.status === 'full' ? 'destructive' : 'warning'} className="capitalize text-xs">
-                        {bin.status}
-                      </Badge>
+                      <Badge variant={bin.status === 'active' ? 'success' : bin.status === 'full' ? 'destructive' : 'warning'} className="capitalize text-xs">{bin.status}</Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      {bin.last_collected ? timeAgo(bin.last_collected) : '—'}
-                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{bin.last_collected ? timeAgo(bin.last_collected) : '—'}</TableCell>
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
                           <Link to={`/bins/${bin.id}`}><Eye className="h-3.5 w-3.5" /></Link>
                         </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(bin)}>
-                          <Edit className="h-3.5 w-3.5" />
-                        </Button>
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(bin)}>
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(bin)}><Edit className="h-3.5 w-3.5" /></Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => handleDelete(bin)}><Trash2 className="h-3.5 w-3.5" /></Button>
                       </div>
                     </TableCell>
                   </TableRow>
                 ))}
               </TableBody>
             </Table>
-            {!isLoading && filtered.length === 0 && (
-              <p className="text-center text-muted-foreground py-10 text-sm">No bins found</p>
-            )}
+            {filtered.length === 0 && <p className="text-center text-muted-foreground py-10 text-sm">No bins found</p>}
           </CardContent>
         </Card>
       </div>
 
-      {/* Add/Edit Dialog */}
       <Dialog open={showDialog} onOpenChange={setShowDialog}>
         <DialogContent className="max-w-lg">
           <DialogHeader><DialogTitle>{editBin ? 'Edit Bin' : 'Add New Bin'}</DialogTitle></DialogHeader>
@@ -178,36 +152,28 @@ export default function BinManagement() {
             <div className="space-y-1"><Label>Zone</Label>
               <Select value={form.zone} onValueChange={v => setForm(f => ({ ...f, zone: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['Zone A','Zone B','Zone C','Zone D','Zone E'].map(z => <SelectItem key={z} value={z}>{z}</SelectItem>)}
-                </SelectContent>
+                <SelectContent>{['Zone A','Zone B','Zone C','Zone D','Zone E'].map(z => <SelectItem key={z} value={z}>{z}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1"><Label>Waste Type</Label>
               <Select value={form.waste_type} onValueChange={v => setForm(f => ({ ...f, waste_type: v as any }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['general','recyclable','organic','hazardous'].map(t => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}
-                </SelectContent>
+                <SelectContent>{['general','recyclable','organic','hazardous'].map(t => <SelectItem key={t} value={t} className="capitalize">{t}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1"><Label>Status</Label>
               <Select value={form.status} onValueChange={v => setForm(f => ({ ...f, status: v as any }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  {['active','maintenance','offline','full'].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}
-                </SelectContent>
+                <SelectContent>{['active','maintenance','offline','full'].map(s => <SelectItem key={s} value={s} className="capitalize">{s}</SelectItem>)}</SelectContent>
               </Select>
             </div>
             <div className="space-y-1"><Label>Capacity (L)</Label><Input type="number" value={form.capacity_liters} onChange={e => setForm(f => ({ ...f, capacity_liters: +e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Latitude</Label><Input type="number" step="any" value={form.latitude} onChange={e => setForm(f => ({ ...f, latitude: +e.target.value }))} /></div>
-            <div className="space-y-1"><Label>Longitude</Label><Input type="number" step="any" value={form.longitude} onChange={e => setForm(f => ({ ...f, longitude: +e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Fill Level (%)</Label><Input type="number" min={0} max={100} value={form.fill_level} onChange={e => setForm(f => ({ ...f, fill_level: +e.target.value }))} /></div>
+            <div className="space-y-1"><Label>Battery (%)</Label><Input type="number" min={0} max={100} value={form.battery_level} onChange={e => setForm(f => ({ ...f, battery_level: +e.target.value }))} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowDialog(false)}>Cancel</Button>
-            <Button className="bg-green-600 hover:bg-green-700" onClick={handleSave} disabled={createBin.isPending || updateBin.isPending}>
-              {editBin ? 'Save Changes' : 'Add Bin'}
-            </Button>
+            <Button className="bg-green-600 hover:bg-green-700" onClick={handleSave}>{editBin ? 'Save Changes' : 'Add Bin'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
